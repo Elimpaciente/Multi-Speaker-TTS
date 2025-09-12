@@ -397,6 +397,7 @@
         
         <div class="bottom-buttons">
             <button onclick="showApiKeyModal()">Clave API</button>
+            <button onclick="openTelegram()" style="background: #0088cc;">Sígueme en mi canal de Telegram</button>
             <button onclick="clearText()">Limpiar</button>
         </div>
     </div>
@@ -485,7 +486,12 @@
             if (currentText === '') {
                 newText = speakerName + ': ';
             } else {
-                newText = currentText + '\n' + speakerName + ': ';
+                // Verificar si el texto termina con nueva línea, si no, agregarla
+                if (!currentText.endsWith('\n')) {
+                    newText = currentText + '\n' + speakerName + ': ';
+                } else {
+                    newText = currentText + speakerName + ': ';
+                }
             }
             
             textarea.value = newText;
@@ -493,6 +499,10 @@
             
             // Posicionar cursor después de los dos puntos para escribir el texto
             textarea.setSelectionRange(newText.length, newText.length);
+        }
+        
+        function openTelegram() {
+            window.open('https://t.me/Pluginimpaciente', '_blank');
         }
         
         function clearText() {
