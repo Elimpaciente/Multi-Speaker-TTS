@@ -175,6 +175,14 @@
             background: #2980b9;
         }
         
+        .play-btn.playing {
+            background: #e74c3c;
+        }
+        
+        .play-btn.playing:hover {
+            background: #c0392b;
+        }
+        
         .download-btn {
             background: #e67e22;
             color: white;
@@ -390,7 +398,7 @@
         <div id="audioResult" class="audio-result">
             <h3>Audio generado</h3>
             <div class="audio-controls">
-                <button class="play-btn" onclick="playAudio()">Reproducir</button>
+                <button class="play-btn" id="playBtn" onclick="togglePlayPause()">Reproducir</button>
                 <button class="download-btn" onclick="downloadAudio()">Descargar</button>
             </div>
         </div>
@@ -418,6 +426,7 @@
 
     <script>
         let currentAudioBlob = null;
+        let currentAudio = null;
         
         // Cargar configuraciones al iniciar
         window.onload = function() {
@@ -478,26 +487,23 @@
             }
         }
         
+        // FUNCIÓN CORREGIDA: Ahora funciona exactamente igual que el complemento Lua
         function insertSpeakerTag(speakerName) {
             const textarea = document.getElementById('conversation');
             const currentText = textarea.value;
-            let newText;
+            let tagText = speakerName + ': ';
             
-            if (currentText === '') {
-                newText = speakerName + ': ';
-            } else {
-                // Verificar si el texto termina con nueva línea, si no, agregarla
-                if (!currentText.endsWith('\n')) {
-                    newText = currentText + '\n' + speakerName + ': ';
-                } else {
-                    newText = currentText + speakerName + ': ';
-                }
+            // MISMA LÓGICA QUE EL COMPLEMENTO: Si hay texto, agregar nueva línea antes del tag
+            if (currentText !== '') {
+                tagText = '\n' + tagText;
             }
             
+            // Agregar el tag al texto existente
+            const newText = currentText + tagText;
             textarea.value = newText;
             textarea.focus();
             
-            // Posicionar cursor después de los dos puntos para escribir el texto
+            // Posicionar cursor al final para que el usuario pueda escribir inmediatamente
             textarea.setSelectionRange(newText.length, newText.length);
         }
         
@@ -508,6 +514,7 @@
         function clearText() {
             document.getElementById('conversation').value = '';
             hideAudioResult();
+            stopCurrentAudio();
         }
         
         function showStatus(message, type) {
@@ -527,6 +534,73 @@
         function hideAudioResult() {
             document.getElementById('audioResult').classList.remove('show');
             currentAudioBlob = null;
+            stopCurrentAudio();
+        }
+        
+        // NUEVA FUNCIÓN: Detener audio actual
+        function stopCurrentAudio() {
+            if (currentAudio) {
+                currentAudio.pause();
+                currentAudio.currentTime = 0;
+                currentAudio = null;
+                updatePlayButton(false);
+            }
+        }
+        
+        // NUEVA FUNCIÓN: Actualizar botón de reproducir/pausar
+        function updatePlayButton(isPlaying) {
+            const playBtn = document.getElementById('playBtn');
+            if (isPlaying) {
+                playBtn.textContent = 'Pausar';
+                playBtn.classList.add('playing');
+            } else {
+                playBtn.textContent = 'Reproducir';
+                playBtn.classList.remove('playing');
+            }
+        }
+        
+        // FUNCIÓN MEJORADA: Control de reproducir/pausar como en el complemento
+        function togglePlayPause() {
+            if (!currentAudioBlob) return;
+            
+            // Si hay audio reproduciéndose, pausar
+            if (currentAudio && !currentAudio.paused) {
+                currentAudio.pause();
+                updatePlayButton(false);
+                return;
+            }
+            
+            // Si hay audio pausado, reanudar
+            if (currentAudio && currentAudio.paused) {
+                currentAudio.play();
+                updatePlayButton(true);
+                return;
+            }
+            
+            // Crear nuevo audio
+            stopCurrentAudio(); // Limpiar cualquier audio anterior
+            
+            currentAudio = new Audio();
+            const url = URL.createObjectURL(currentAudioBlob);
+            currentAudio.src = url;
+            
+            currentAudio.onloadeddata = function() {
+                currentAudio.play();
+                updatePlayButton(true);
+            };
+            
+            currentAudio.onended = function() {
+                URL.revokeObjectURL(url);
+                currentAudio = null;
+                updatePlayButton(false);
+            };
+            
+            currentAudio.onerror = function() {
+                URL.revokeObjectURL(url);
+                currentAudio = null;
+                updatePlayButton(false);
+                showStatus('Error reproduciendo audio', 'error');
+            };
         }
         
         async function generateAudio() {
@@ -595,7 +669,19 @@
                 });
                 
                 if (!response.ok) {
-                    throw new Error(`Error API: ${response.status}`);
+                    let errorMsg = `Error API: ${response.status}`;
+                    if (response.status === 400) {
+                        errorMsg = "Solicitud incorrecta - Verifica el texto y las voces";
+                    } else if (response.status === 401) {
+                        errorMsg = "API Key inválida - Verifica tu clave";
+                    } else if (response.status === 403) {
+                        errorMsg = "Acceso denegado - API Key sin permisos";
+                    } else if (response.status === 429) {
+                        errorMsg = "Demasiadas solicitudes - Espera un momento";
+                    } else if (response.status === 500) {
+                        errorMsg = "Error del servidor - Intenta de nuevo";
+                    }
+                    throw new Error(errorMsg);
                 }
                 
                 const data = await response.json();
@@ -603,10 +689,14 @@
                 if (!data.candidates || !data.candidates[0] || !data.candidates[0].content || 
                     !data.candidates[0].content.parts || !data.candidates[0].content.parts[0] ||
                     !data.candidates[0].content.parts[0].inlineData) {
-                    throw new Error('Respuesta inválida de la API');
+                    throw new Error('El servidor no devolvió audio válido');
                 }
                 
                 const base64Audio = data.candidates[0].content.parts[0].inlineData.data;
+                if (!base64Audio) {
+                    throw new Error('Datos de audio vacíos');
+                }
+                
                 const audioBlob = base64ToBlob(base64Audio, 'audio/wav');
                 currentAudioBlob = audioBlob;
                 
@@ -672,19 +762,6 @@
             uint8View.set(pcmData, 44);
             
             return uint8View;
-        }
-        
-        function playAudio() {
-            if (currentAudioBlob) {
-                const audio = new Audio();
-                const url = URL.createObjectURL(currentAudioBlob);
-                audio.src = url;
-                audio.play();
-                
-                audio.onended = function() {
-                    URL.revokeObjectURL(url);
-                };
-            }
         }
         
         function downloadAudio() {
